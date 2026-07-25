@@ -1,11 +1,10 @@
 import os
-import random
+import sqlite3
 import discord
 from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv
 
-# Load environment variables from the .env file
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 
@@ -15,80 +14,145 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-catpillr_counts = {}
+DB_FILE = "catpillr.db"
 
-# Load triggers from triggers.txt file automatically
+
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS catpillr_counts (
+            user_id INTEGER PRIMARY KEY,
+            count INTEGER DEFAULT 0
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def get_user_count(user_id: int) -> int:
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("SELECT count FROM catpillr_counts WHERE user_id = ?", (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else 0
+
+
+def add_user_count(user_id: int, amount: int) -> int:
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO catpillr_counts (user_id, count)
+        VALUES (?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET count = count + ?
+    """, (user_id, amount, amount))
+    conn.commit()
+
+    cursor.execute("SELECT count FROM catpillr_counts WHERE user_id = ?", (user_id,))
+    new_count = cursor.fetchone()[0]
+    conn.close()
+    return new_count
+
+
+def get_global_total() -> int:
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("SELECT SUM(count) FROM catpillr_counts")
+    total = cursor.fetchone()[0]
+    conn.close()
+    return total if total else 0
+
+
+init_db()
+
 TRIGGERS = []
 try:
-  with open("triggers.txt", "r", encoding="utf-8") as f:
-    text = f.read()
-    TRIGGERS = text.split()
-  print(f"Loaded {len(TRIGGERS)} triggers from triggers.txt")
+    with open("triggers.txt", "r", encoding="utf-8") as f:
+        text = f.read()
+        TRIGGERS = text.split()
+    print(f"loaded {len(TRIGGERS)} triggers")
 except FileNotFoundError:
-  print("WARNING: triggers.txt not found! Defaulting to basic triggers.")
-  TRIGGERS = ["catpillr", "caterpillar", "🐛"]
+    print("triggers.txt missing, using defaults")
+    TRIGGERS = ["catpillr", "caterpillar", "🐛"]
 
 
 @bot.event
 async def on_ready():
-  print(f"Logged in as {bot.user}!")
-  try:
-    synced = await bot.tree.sync()
-    print(f"Synced {len(synced)} slash command(s).")
-  except Exception as e:
-    print(e)
+    print(f"Logged in as {bot.user}")
+    try:
+        synced = await bot.tree.sync()
+        print(f"synced {len(synced)} commands")
+    except Exception as e:
+        print(e)
 
 
 @bot.event
 async def on_message(message):
-  if message.author == bot.user or message.author.bot:
-    return
+    if message.author == bot.user or message.author.bot:
+        return
 
-  content_lower = message.content.lower()
+    content_lower = message.content.lower()
 
-  total_found = 0
-  for trigger in TRIGGERS:
-    total_found += content_lower.count(trigger.lower())
+    total_found = 0
+    for trigger in TRIGGERS:
+        total_found += content_lower.count(trigger.lower())
 
-  if total_found > 0:
-    user_id = message.author.id
+    if total_found > 0:
+        current_count = add_user_count(message.author.id, total_found)
+        username = message.author.display_name
 
-    if user_id not in catpillr_counts:
-      catpillr_counts[user_id] = 0
-    catpillr_counts[user_id] += total_found
+        await message.channel.send(
+            f"catpillr detected 🐛🐛🐛 {username} now has {current_count} catpillr 🐛🐛🐛"
+        )
 
-    current_count = catpillr_counts[user_id]
-    username = message.author.display_name
-
-    await message.channel.send(
-        f"catpillr detected 🐛🐛🐛 {username} now has {current_count} catpillr"
-        " 🐛🐛🐛"
-    )
-
-  await bot.process_commands(message)
+    await bot.process_commands(message)
 
 
 @bot.tree.command(
-    name="checkcatpillr", description="Check how many catpillrs someone has!"
+    name="checkcatpillr", description="check catpillr count for someone"
 )
-@app_commands.describe(user="The user you want to check")
+@app_commands.describe(user="who to check")
 async def checkcatpillr(interaction: discord.Interaction, user: discord.Member):
-  count = catpillr_counts.get(user.id, 0)
-  await interaction.response.send_message(
-      f"🐛 {user.display_name} has {count} catpillr(s)!"
-  )
+    count = get_user_count(user.id)
+    await interaction.response.send_message(
+        f"🐛 {user.display_name} has {count} catpillr"
+    )
 
 
 @bot.tree.command(
     name="gcatpillr",
-    description="See the total global sum of all catpillrs collected!",
+    description="total global catpillrs collected",
 )
 async def gcatpillr(interaction: discord.Interaction):
-  grand_total = sum(catpillr_counts.values())
-  await interaction.response.send_message(
-      f"🐛🌍 Across all servers, there is a global total of **{grand_total}**"
-      " catpillr(s) collected so far!"
-  )
+    grand_total = get_global_total()
+    await interaction.response.send_message(
+        f"🐛 global total: **{grand_total}** catpillr"
+    )
+
+
+@bot.tree.command(
+    name="bcatpillr",
+    description="top catpillr collectors",
+)
+async def bcatpillr(interaction: discord.Interaction):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT user_id, count FROM catpillr_counts ORDER BY count DESC LIMIT 10"
+    )
+    top_users = cursor.fetchall()
+    conn.close()
+
+    if not top_users:
+        await interaction.response.send_message("nobody found any catpillrs yet lol")
+        return
+
+    leaderboard_text = "🐛 **catpillr leaderboard** 🐛\n\n"
+    for rank, (u_id, count) in enumerate(top_users, start=1):
+        leaderboard_text += f"**#{rank}** <@{u_id}> — **{count}**\n"
+
+    await interaction.response.send_message(leaderboard_text)
 
 
 bot.run(TOKEN)
