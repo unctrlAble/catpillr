@@ -1,4 +1,5 @@
 # Terms of service
+###### last updated july 25
 ## 1. What Catpillr Collects & Stores
 - Your Discord User ID, Server ID, and Channel IDs.
 - Word / Message Counts (the stats Catpillr keeps track of).
