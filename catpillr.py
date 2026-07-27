@@ -14,7 +14,8 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
-bot = commands.Bot(command_prefix="ctplr.", intents=intents)
+# strip_after_prefix=True allows spaces like "ctplr. checkcatpillr"
+bot = commands.Bot(command_prefix="ctplr.", strip_after_prefix=True, intents=intents)
 
 DB_FILE = "catpillr.db"
 
@@ -127,94 +128,150 @@ async def on_message(message):
     await bot.process_commands(message)
 
 
-@bot.tree.command(
-    name="checkcatpillr", description="check catpillr count for someone"
-)
+@bot.event
+async def on_command_error(ctx, error):
+    # Ignore CommandNotFound errors to keep console logs clean
+    if isinstance(error, commands.CommandNotFound):
+        return
+    raise error
+
+
+# =========================================================
+# CHECK COUNT COMMAND (Prefix & Slash - DM Enabled)
+# =========================================================
+@bot.command(name="checkcatpillr")
+async def prefix_checkcatpillr(ctx, target: discord.User = None):
+    target = target or ctx.author
+    count = get_user_count(target.id)
+    await ctx.send(f"🐛 {target.display_name} has {count} catpillr")
+
+
+@bot.tree.command(name="checkcatpillr", description="check catpillr count for someone")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.describe(user="who to check")
-async def checkcatpillr(interaction: discord.Interaction, user: discord.Member):
+async def checkcatpillr(interaction: discord.Interaction, user: discord.User = None):
+    user = user or interaction.user
     count = get_user_count(user.id)
-    await interaction.response.send_message(
-        f"🐛 {user.display_name} has {count} catpillr"
-    )
+    await interaction.response.send_message(f"🐛 {user.display_name} has {count} catpillr")
 
 
-@bot.tree.command(
-    name="gcatpillr", description="total global catpillrs collected"
-)
+# =========================================================
+# GLOBAL TOTAL COMMAND (Prefix & Slash - DM Enabled)
+# =========================================================
+@bot.command(name="gcatpillr")
+async def prefix_gcatpillr(ctx):
+    grand_total = get_global_total()
+    await ctx.send(f"🐛 global total: **{grand_total}** catpillr")
+
+
+@bot.tree.command(name="gcatpillr", description="total global catpillrs collected")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
 async def gcatpillr(interaction: discord.Interaction):
     grand_total = get_global_total()
-    await interaction.response.send_message(
-        f"🐛 global total: **{grand_total}** catpillr"
-    )
+    await interaction.response.send_message(f"🐛 global total: **{grand_total}** catpillr")
 
 
-@bot.tree.command(
-    name="gbcatpillr", description="top global catpillr collectors"
-)
-async def gbcatpillr(interaction: discord.Interaction):
+# =========================================================
+# GLOBAL LEADERBOARD (Prefix & Slash - DM Enabled)
+# =========================================================
+def build_global_leaderboard():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    cursor.execute(
-        "SELECT user_id, count FROM catpillr_counts ORDER BY count DESC LIMIT 10"
-    )
+    cursor.execute("SELECT user_id, count FROM catpillr_counts ORDER BY count DESC LIMIT 10")
     top_users = cursor.fetchall()
     conn.close()
 
     if not top_users:
-        await interaction.response.send_message(
-            "nobody found any catpillrs yet lol"
-        )
-        return
+        return None
 
-    leaderboard_text = "🐛 **global catpillr leaderboard** 🐛\n\n"
+    embed = discord.Embed(title="🐛 Global Catpillr Leaderboard", color=discord.Color.green())
+    leaderboard_text = ""
     for rank, (u_id, count) in enumerate(top_users, start=1):
-        leaderboard_text += f"**#{rank}** <@{u_id}> — **{count}**\n"
+        leaderboard_text += f"**#{rank}** <@{u_id}> — **{count}** catpillrs\n"
 
-    await interaction.response.send_message(leaderboard_text)
+    embed.description = leaderboard_text
+    return embed
 
 
-@bot.tree.command(
-    name="sbcatpillr", description="top catpillr collectors in this server"
-)
-async def sbcatpillr(interaction: discord.Interaction):
-    if not interaction.guild:
-        await interaction.response.send_message(
-            "this command only works inside a server!"
-        )
+@bot.command(name="gbcatpillr")
+async def prefix_gbcatpillr(ctx):
+    embed = build_global_leaderboard()
+    if not embed:
+        await ctx.send("nobody found any catpillrs yet lol")
         return
+    await ctx.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
 
+
+@bot.tree.command(name="gbcatpillr", description="top global catpillr collectors")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
+async def gbcatpillr(interaction: discord.Interaction):
+    embed = build_global_leaderboard()
+    if not embed:
+        await interaction.response.send_message("nobody found any catpillrs yet lol")
+        return
+    await interaction.response.send_message(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+
+
+# =========================================================
+# SERVER LEADERBOARD (Prefix & Slash)
+# =========================================================
+def build_server_leaderboard(guild):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    # Fetch all users sorted by count
-    cursor.execute(
-        "SELECT user_id, count FROM catpillr_counts ORDER BY count DESC"
-    )
+    cursor.execute("SELECT user_id, count FROM catpillr_counts ORDER BY count DESC")
     all_users = cursor.fetchall()
     conn.close()
 
     server_top = []
     for u_id, count in all_users:
-        # Only keep users who belong to this server
-        if interaction.guild.get_member(u_id):
+        if guild.get_member(u_id):
             server_top.append((u_id, count))
             if len(server_top) == 10:
                 break
 
     if not server_top:
-        await interaction.response.send_message(
-            "nobody in this server found any catpillrs yet lol"
-        )
-        return
+        return None
 
-    leaderboard_text = (
-        f"🐛 **{interaction.guild.name} catpillr leaderboard** 🐛\n\n"
-    )
+    embed = discord.Embed(title=f"🐛 {guild.name} Catpillr Leaderboard", color=discord.Color.green())
+    leaderboard_text = ""
     for rank, (u_id, count) in enumerate(server_top, start=1):
-        leaderboard_text += f"**#{rank}** <@{u_id}> — **{count}**\n"
+        leaderboard_text += f"**#{rank}** <@{u_id}> — **{count}** catpillrs\n"
 
-    await interaction.response.send_message(leaderboard_text)
+    embed.description = leaderboard_text
+    return embed
 
 
+@bot.command(name="sbcatpillr")
+async def prefix_sbcatpillr(ctx):
+    if not ctx.guild:
+        await ctx.send("❌ Server leaderboard only works inside a server, not in DMs!")
+        return
+    embed = build_server_leaderboard(ctx.guild)
+    if not embed:
+        await ctx.send("nobody in this server found any catpillrs yet lol")
+        return
+    await ctx.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+
+
+@bot.tree.command(name="sbcatpillr", description="top catpillr collectors in this server")
+@app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
+async def sbcatpillr(interaction: discord.Interaction):
+    if not interaction.guild:
+        await interaction.response.send_message("❌ Server leaderboard only works inside a server, not in DMs!", ephemeral=True)
+        return
+    embed = build_server_leaderboard(interaction.guild)
+    if not embed:
+        await interaction.response.send_message("nobody in this server found any catpillrs yet lol")
+        return
+    await interaction.response.send_message(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+
+
+# =========================================================
+# OWNER-ONLY DELETE (Prefix & Slash - DM Enabled)
+# =========================================================
 @bot.command(name="delete")
 async def prefix_delete(ctx, target: discord.User):
     if ctx.author.id != BOT_OWNER_ID:
@@ -232,12 +289,12 @@ async def prefix_delete(ctx, target: discord.User):
 @prefix_delete.error
 async def prefix_delete_error(ctx, error):
     if isinstance(error, commands.MissingRequiredArgument):
-        await ctx.send("⚠️ Usage: `ctplr.delete @user`")
+        await ctx.send("⚠️ Usage: `ctplr.delete @user` or `ctplr. delete @user`")
 
 
-@bot.tree.command(
-    name="delete", description="wipes a user's catpillr data (owner only)"
-)
+@bot.tree.command(name="delete", description="wipes a user's catpillr data (owner only)")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.describe(user="user to wipe")
 async def slash_delete(interaction: discord.Interaction, user: discord.User):
     if interaction.user.id != BOT_OWNER_ID:
