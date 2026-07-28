@@ -5,6 +5,10 @@ from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_FILE = os.path.join(BASE_DIR, "catpillr.db")
+TRIGGERS_FILE = os.path.join(BASE_DIR, "triggers.txt")
+
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 
@@ -14,10 +18,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
-# strip_after_prefix=True allows spaces like "ctplr. checkcatpillr"
 bot = commands.Bot(command_prefix="ctplr.", strip_after_prefix=True, intents=intents)
-
-DB_FILE = "catpillr.db"
 
 
 def init_db():
@@ -86,7 +87,7 @@ init_db()
 
 TRIGGERS = []
 try:
-    with open("triggers.txt", "r", encoding="utf-8") as f:
+    with open(TRIGGERS_FILE, "r", encoding="utf-8") as f:
         text = f.read()
         TRIGGERS = text.split()
     print(f"loaded {len(TRIGGERS)} triggers")
@@ -130,10 +131,26 @@ async def on_message(message):
 
 @bot.event
 async def on_command_error(ctx, error):
-    # Ignore CommandNotFound errors to keep console logs clean
     if isinstance(error, commands.CommandNotFound):
         return
     raise error
+
+
+# =========================================================
+# GENERAL SLASH COMMANDS (/help & /prefix)
+# =========================================================
+@bot.tree.command(name="help", description="get help and support server link")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
+async def slash_help(interaction: discord.Interaction):
+    await interaction.response.send_message("https://discord.gg/2s8Um6Wgn3")
+
+
+@bot.tree.command(name="prefix", description="check the bot prefix")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
+async def slash_prefix(interaction: discord.Interaction):
+    await interaction.response.send_message("the prefix is ctplr.")
 
 
 # =========================================================
