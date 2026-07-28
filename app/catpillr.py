@@ -20,6 +20,9 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="ctplr.", strip_after_prefix=True, intents=intents)
 
+# Remove default built-in help command to prevent registration collision crash
+bot.remove_command("help")
+
 
 def init_db():
     conn = sqlite3.connect(DB_FILE)
@@ -134,6 +137,19 @@ async def on_command_error(ctx, error):
     if isinstance(error, commands.CommandNotFound):
         return
     raise error
+
+
+# =========================================================
+# PREFIX COMMANDS (ctplr.help & ctplr.prefix)
+# =========================================================
+@bot.command(name="help")
+async def prefix_help(ctx):
+    await ctx.send("https://discord.gg/2s8Um6Wgn3")
+
+
+@bot.command(name="prefix")
+async def prefix_prefix(ctx):
+    await ctx.send("the prefix is ctplr.")
 
 
 # =========================================================
